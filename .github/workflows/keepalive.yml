@@ -1,0 +1,64 @@
+name: keepalive
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: ping
+        env:
+          BASE: https://yeoungju-lms.vercel.app
+          TZ: Asia/Seoul
+        run: |
+          set -u
+          mkdir -p log
+          URLS="/ko /ko/login /api/enrollments/me /api/health"
+          f="log/$(date +%F).csv"
+          [ -f "$f" ] || echo "time,url,http,ttfb_s,total_s" > "$f"
+          for i in 1 2 3 4; do
+            for u in $URLS; do
+              out=$(curl -s -o /dev/null -w "%{http_code},%{time_starttransfer},%{time_total}" --max-time 30 "$BASE$u" || echo "000,0,0")
+              echo "$(date +%T),$u,$out" >> "$f"
+            done
+            if [ "$i" -lt 4 ]; then sleep 90; fi
+          done
+
+      - name: commit log
+        run: |
+          git config user.name "keepalive-bot"
+          git config user.email "keepalive-bot@users.noreply.github.com"
+          git add log
+          git commit -qm "log: $(TZ=Asia/Seoul date '+%F %R')" || exit 0
+          for n in 1 2 3 4 5; do
+            git pull --rebase -q && git push -q && exit 0
+            sleep $((n * 5))
+          done
+          exit 1
+
+      - name: chain next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          queued=$(gh run list --workflow keepalive --status queued --json databaseId --jq 'length')
+          running=$(gh run list --workflow keepalive --status in_progress --json databaseId --jq '[.[] | select(.databaseId != ${{ github.run_id }})] | length')
+          if [ "$queued" = "0" ] && [ "$running" = "0" ]; then
+            gh workflow run keepalive --ref main
+          fi
