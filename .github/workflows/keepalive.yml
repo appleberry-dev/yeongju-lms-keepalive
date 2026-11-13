@@ -32,6 +32,7 @@ jobs:
           URLS="/ko /ko/login /api/enrollments/me /api/health"
           f="log/$(date +%F).csv"
           [ -f "$f" ] || echo "time,url,http,ttfb_s,total_s" > "$f"
+          curl -s -o /dev/null --max-time 30 "$BASE/api/health" || true
           for i in 1 2 3 4; do
             for u in $URLS; do
               out=$(curl -s -o /dev/null -w "%{http_code},%{time_starttransfer},%{time_total}" --max-time 30 "$BASE$u" || echo "000,0,0")
